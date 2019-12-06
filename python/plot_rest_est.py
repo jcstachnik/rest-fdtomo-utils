@@ -54,7 +54,7 @@ def getargs():
                         help=helpmsg)
     helpmsg = "Base name for saving files [Event]."
     parser.add_argument("-b","--base",required=False, type=str,
-                        default='Event',
+                        default='Event_string',
                         help=helpmsg)
     helpmsg = "Do Not show figures to screen."
     parser.add_argument("--noshow",required=False, type=bool,
@@ -66,11 +66,14 @@ def getargs():
 
 def get_at_from_event(ievent, sta, chan):
     picks = ievent.picks
+    arrs = ievent.origins[0].arrivals # assume 1 orig
     for i,pik in enumerate(picks):
         if str(pik.waveform_id.station_code) == str(sta) and \
             str(pik.waveform_id.channel_code) == str(chan):
-            return pik.time,pik.time_errors
-    return None,None
+            for j,ar in enumerate(arrs):
+                if pik.resource_id == ar.pick_id:
+                    return pik.time, pik.time_errors, pik.evaluation_status, ar.time_residual
+    return None,None,None,None
 
 def plotwf(obs, est, showfig=True, block=False,
                 pltname='Test', title='Example', savefig=False):
@@ -114,6 +117,7 @@ def plotwf(obs, est, showfig=True, block=False,
            nr = nsta - (F-1)*nperpage
         nr *= 1
         #  Initialize figure
+        print('{0} stas in plot {1}'.format(nr,f))
         ff = title+'_'+str(f)
         fig=plt.figure(ff,figsize=(Xsize,Ysize),facecolor='w')
         p=3
@@ -126,20 +130,41 @@ def plotwf(obs, est, showfig=True, block=False,
              sttime = st[i].times()
              stdat = st[i].data / np.abs(st[i].data).max()
              #ax1=plt.plot(sttime,st[i].data,color='k',linewidth=2.0)
-             ax1=plt.plot(sttime, stdat, color='k', linewidth=1.0)
-             ax1=plt.axvspan(2-st[i].stats.arrival_time_error.uncertainty, 
-                            2+st[i].stats.arrival_time_error.uncertainty, alpha=0.5, color='red')
+             ax0=plt.plot(sttime, stdat, color='k', linewidth=1.0)
+             if st[i].stats.eval_status == 'confirmed':
+                 boxcolor = 'lightskyblue'
+             else:
+                 boxcolor = 'tomato'
+             ax0=plt.axvspan(2-st[i].stats.arrival_time_error.uncertainty, 
+                            2+st[i].stats.arrival_time_error.uncertainty, alpha=0.5, color=boxcolor)
              if gr is not None:
                 grtime = gr[i].times()
                 grdat = gr[i].data / gr[i].data.max()
                 #ax1=plt.plot(grtime,gr[i].data,color='r', linewidth=0.75)
-                ax1=plt.plot(grtime, grdat, color='r', linewidth=0.75)
+                ax0=plt.plot(grtime, grdat, color='r', linewidth=0.75)
                 #ax1=plt.vlines(x=0, ymin=-1, ymax=1, color='b', linestyle=':')
-                ax1=plt.vlines(x=2., ymin=-1, ymax=1, color='b', linestyle=':')
+                ax0=plt.vlines(x=2., ymin=-1, ymax=1, color='b', linestyle=':')
 
              info=st[i].stats.station+'_'+st[i].stats.channel 
-             ax1=plt.title(info,fontsize=8,loc='left')
-             ax1=plt.axis('off')
+             info='{0}_{1} {2} {3}'.format(st[i].stats.station, st[i].stats.channel, 
+                                        st[i].stats.arrival_time_error.uncertainty,
+                                        st[i].stats.time_residual)
+             #ax1=plt.title(info,fontsize=8,loc='left')
+             plt.title(info,fontsize=6,loc='left')
+             # only plot the bottom xaxis on last subplot of page
+             if k==nr-1:
+                #ax1=plt.axis('on')
+                #ax1=plt.axes(frameon=False)
+                #ax1.get_xaxis().tick_bottom()
+                #ax1.axes.get_yaxis().set_visible(False)
+                ax1.spines['right'].set_visible(False)
+                ax1.spines['top'].set_visible(False)
+                ax1.spines['left'].set_visible(False)
+                #ax1.xaxis.set_ticks_position('bottom')
+                ax1.tick_params(left=False)
+                ax1.set_yticklabels([])
+             else:
+                ax1=plt.axis('off')
              i = i+1
         #fig.savefig(ofname, bbox_inches='tight')
         #fig.savefig(ofname+'.eps', format='eps', bbox_inches='tight')
@@ -165,8 +190,8 @@ if __name__ == "__main__":
     sub = args.sub
     stz = read(sub)
     stz.sort(keys=['station'])
-
-"""
+    pltbase = args.base
+    """
     if bessel:
         order = 3
         sps = 100
@@ -175,15 +200,15 @@ if __name__ == "__main__":
         b, a = signal.bessel(order, Wn, 'bandpass')
         data_filt1 = signal.lfilter(b, a, data)
         data_filt2 = signal.filtfilt(b, a, data)
-"""
-
+    """
     obsall = Stream()
     estall = Stream()
     for i,trz in enumerate(stz):
         tro = trz.copy()
         sta = trz.stats.station
         zchan = trz.stats.channel
-        at,tres = get_at_from_event(ievent, sta, zchan)
+        #at,aterr,evstat = get_at_from_event(ievent, sta, zchan)
+        at,aterr,evstat,atres = get_at_from_event(ievent, sta, zchan)
         if at is None:
             continue
         #data_filt = signal.filtfilt(b, a, trz.data)
@@ -194,7 +219,9 @@ if __name__ == "__main__":
         trz.detrend(type='demean')
         trz.trim(starttime=at-pre, endtime=at+post)
         trz.stats.arrival_time = at
-        trz.stats.arrival_time_error = tres
+        trz.stats.arrival_time_error = aterr
+        trz.stats.eval_status = evstat # confirmed or rejected whether its used or not in rest,fdtomo
+        trz.stats.time_residual = atres # travel time residual
     
         efil = glob('*{0}.{1}.est'.format(sta,zchan))
         if (len(efil) < 1):
@@ -207,7 +234,7 @@ if __name__ == "__main__":
             obsall += trz
             estall += ez
     if len(estall)>0:
-        plotwf(obsall, estall, pltname='Event_string', 
+        plotwf(obsall, estall, pltname=pltbase, 
                 title='Origin_Info_Here',
                 showfig=showfig)
     else:

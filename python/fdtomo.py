@@ -141,7 +141,7 @@ def read_arrival_line(line, fmt='fixed', dZch='HHZ', dHch='HHN'):
             mn += 1
         yn = line[28:29]
         ph = line[29:30]
-        deltim = float(line[39:46])
+        timeres = float(line[50:56]) # tt residual?
         tunc = float(line[40:45]) # arr time uncertainty
         astr = '{0}-{1:03d}T{2:02d}:{3:02d}:{4:06.4f}'.format(yr,jd,hr,mn,sec)
         at = UTCDateTime(astr)
@@ -162,7 +162,7 @@ def read_arrival_line(line, fmt='fixed', dZch='HHZ', dHch='HHN'):
                    "sec" : sec,
                    "yn" : yn,
                    "ph" : ph,
-                   "deltim" : deltim,
+                   "timeres" : timeres,
                    "tunc" : tunc,
                    "astr" : astr,
                    "at" : at,
@@ -216,11 +216,15 @@ def mkevent(origlist, arrivallist):
         _waveform_id = WaveformStreamID(station_code=arr['sta'], 
                                             channel_code=arr['chan'],
                                             network_code='XX')
+        evstat = "confirmed"
+        if arr['yn'] == 'X' or arr['yn'] == '*':
+            evstat = "rejected"
         # can add onset='impulsive', polarity='positive',
         ipick = Pick(waveform_id=_waveform_id,
                                     phase_hint=arr['ph'],
                                     time=arr['at'],
                                     time_errors={"uncertainty":arr['tunc']},
+                                    evaluation_status=evstat,
                                     )
         test_event.picks.append(ipick)
         distdeg = 1
@@ -228,7 +232,8 @@ def mkevent(origlist, arrivallist):
         iarr = Arrival(pick_id=ipick.resource_id,
                             phase=ipick.phase_hint,
                             distance=distdeg,
-                            azimuth=azdeg
+                            azimuth=azdeg,
+                            time_residual=arr['timeres']
                             )
         test_event.origins[0].arrivals.append(iarr)                        
     return test_event

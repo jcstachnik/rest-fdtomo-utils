@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from fdtomo import fdloc2catalog
 import argparse
+from obspy.signal.util import smooth
 
 def getargs():
     parser = argparse.ArgumentParser(description=
@@ -14,15 +15,15 @@ def getargs():
     '''
     Example: 
     python plot_rest_est.py -f fdloc.final -s "*HHZ" -P 1.0 -p 2.0
+    plot_rest_est.py -f fdloc.final --fmin 10. --fmax 300. 
+            -s "*.Z" -P 0.2 -p 0.2 -Z Z -H N
+    plot_rest_est.py -f fdloc.final --fmin 10. --fmax 300. 
+            -s "*.N" -P 0.2 -p 0.2 -Z Z -H N
+
 
     TODO: 
-    Plot pick uncertainty
-    Show picks not used in location as different color
     Show Origin information
-    Indicate time window
-    Add filter band as command line args
     Add logging
-    Add showfig as command line option
     ''',
     formatter_class=argparse.RawTextHelpFormatter)
     helpmsg = "Name of fdloc format file. "
@@ -52,12 +53,25 @@ def getargs():
     parser.add_argument("-s","--sub",required=False, type=str,
                         default='*HHZ',
                         help=helpmsg)
+    helpmsg = "Channel name for P picks (Z channel) [HHZ]."
+    parser.add_argument("-Z","--zchan",required=False, type=str,
+                        default='HHZ',
+                        help=helpmsg)
+    helpmsg = "Channel name for S picks (Horiz channel) [HHN]."
+    helpmsg += "Note: REST outputs estimation function on N only for S."
+    parser.add_argument("-H","--hchan",required=False, type=str,
+                        default='HHN',
+                        help=helpmsg)
     helpmsg = "Base name for saving files [Event]."
     parser.add_argument("-b","--base",required=False, type=str,
                         default='Event_string',
                         help=helpmsg)
     helpmsg = "Do Not show figures to screen."
-    parser.add_argument("--noshow",required=False, type=bool,
+    parser.add_argument("--noshow",required=False, action='store_true',
+                        default=False,
+                        help=helpmsg)
+    helpmsg = "Plot waveforms that do not have a pick. Default is to skip them."
+    parser.add_argument("--plot_nopick",required=False, action='store_true',
                         default=False,
                         help=helpmsg)
 
@@ -76,7 +90,8 @@ def get_at_from_event(ievent, sta, chan):
     return None,None,None,None
 
 def plotwf(obs, est, showfig=True, block=False,
-                pltname='Test', title='Example', savefig=False):
+                pltname='Test', title='Example', savefig=False,
+                pret=2., post=2.):
     """
     obs: Obspy Stream
     est: Obspy Stream
@@ -91,10 +106,7 @@ def plotwf(obs, est, showfig=True, block=False,
     else:
         gr = None
     # number of stations
-    #StazOb = getSTationslist(st)
-    #StazOb = obs
     nsta = len(obs) # hack
-
     Xsize = 8.5
     Ysize = 11.0
 
@@ -120,33 +132,38 @@ def plotwf(obs, est, showfig=True, block=False,
         print('{0} stas in plot {1}'.format(nr,f))
         ff = title+'_'+str(f)
         fig=plt.figure(ff,figsize=(Xsize,Ysize),facecolor='w')
-        p=3
+        fig.suptitle(title, fontsize=8, y=0.91)
+        p=0 # was 3 to have 1 row offset
         tlen0 = 0
         newbox=False
         for k in range(0,nr):
              p=p+1
-             d = "%s,%s,%s" % (u,3,p)
              ax1=fig.add_subplot(u,3,p)
-             sttime = st[i].times()
+             ax1.set(xlim=(-pret, post), ylim=(-1, 1))
+             #sttime = st[i].times()
+             sttime = st[i].times(reftime=st[i].stats.arrival_time)
              stdat = st[i].data / np.abs(st[i].data).max()
-             #ax1=plt.plot(sttime,st[i].data,color='k',linewidth=2.0)
-             ax0=plt.plot(sttime, stdat, color='k', linewidth=1.0)
+             #ax0=plt.plot(sttime, stdat, color='k', linewidth=1.0)
+             ax1.plot(sttime, stdat, color='k', linewidth=1.0)
              if st[i].stats.eval_status == 'confirmed':
                  boxcolor = 'lightskyblue'
              else:
                  boxcolor = 'tomato'
-             ax0=plt.axvspan(2-st[i].stats.arrival_time_error.uncertainty, 
-                            2+st[i].stats.arrival_time_error.uncertainty, alpha=0.5, color=boxcolor)
+             #ax0=plt.axvspan(pret-st[i].stats.arrival_time_error.uncertainty, 
+             #               pret+st[i].stats.arrival_time_error.uncertainty, alpha=0.5, color=boxcolor)
+             ax1.axvspan(-st[i].stats.arrival_time_error.uncertainty, 
+                            st[i].stats.arrival_time_error.uncertainty, alpha=0.5, color=boxcolor)
+             ax1.vlines(x=0., ymin=-1, ymax=1, color='b', linestyle=':')
              if gr is not None:
-                grtime = gr[i].times()
-                grdat = gr[i].data / gr[i].data.max()
-                #ax1=plt.plot(grtime,gr[i].data,color='r', linewidth=0.75)
-                ax0=plt.plot(grtime, grdat, color='r', linewidth=0.75)
-                #ax1=plt.vlines(x=0, ymin=-1, ymax=1, color='b', linestyle=':')
-                ax0=plt.vlines(x=2., ymin=-1, ymax=1, color='b', linestyle=':')
+                #grtime = gr[i].times()
+                grtime = gr[i].times(reftime=st[i].stats.arrival_time)
+                #grdat = gr[i].data / gr[i].data.max()
+                gg = smooth(gr[i].data, 5)
+                grdat = gg / gg.max()
+                ax1.plot(grtime, grdat, color='r', linewidth=0.75)
 
              info=st[i].stats.station+'_'+st[i].stats.channel 
-             info='{0}_{1} {2} {3}'.format(st[i].stats.station, st[i].stats.channel, 
+             info='{0}_{1} {2} {3:.3f}'.format(st[i].stats.station, st[i].stats.channel, 
                                         st[i].stats.arrival_time_error.uncertainty,
                                         st[i].stats.time_residual)
              #ax1=plt.title(info,fontsize=8,loc='left')
@@ -175,22 +192,34 @@ def plotwf(obs, est, showfig=True, block=False,
 # -------------------------------------------------
 if __name__ == "__main__":
     args,parser = getargs()
-    cat = fdloc2catalog(args.fdfile)
+    cat = fdloc2catalog(args.fdfile, 
+                        Zch=args.zchan, 
+                        Hch=args.hchan)
 
     showfig = True 
     if args.noshow:
         showfig = False
+    plot_nopick = False
+    if args.plot_nopick:
+        plot_nopick = True
+        #print('plot_nopick=True, INCLUDING Waveforms w/o pick')
+        print('plot_nopick=True, NOT IMPLEMENTED')
     ievent = cat[0]
     iorigin = ievent.origins[0]
     ot = iorigin.time
-    fmn=1.0
-    fmx=15.0
+    fmn=args.fmin
+    fmx=args.fmax
     pre = args.pre
     post = args.post
     sub = args.sub
     stz = read(sub)
     stz.sort(keys=['station'])
     pltbase = args.base
+    ot = cat[0].origins[0].time.format_iris_web_service()
+    la = cat[0].origins[0].latitude
+    lo = cat[0].origins[0].longitude
+    z = cat[0].origins[0].depth/1000
+    origin_string = f'{ot} Lat: {la:.3f} Lon: {lo:.3f} Dep: {z:.3f} km'
     """
     if bessel:
         order = 3
@@ -210,7 +239,18 @@ if __name__ == "__main__":
         #at,aterr,evstat = get_at_from_event(ievent, sta, zchan)
         at,aterr,evstat,atres = get_at_from_event(ievent, sta, zchan)
         if at is None:
-            continue
+            if plot_nopick:
+                continue
+                #print('No arrival time for {}'.format(sta))
+                #at = trz.stats.starttime
+                #pre=0
+                #post=trz.stats.endtime - trz.stats.starttime
+                #aterr={'uncertainty':0}
+                #evstat='confirmed'
+                #atres=0
+            else:
+                print('No arrival time for {}, Skipping'.format(sta))
+                continue
         #data_filt = signal.filtfilt(b, a, trz.data)
         #tro.data = data_filt
         trz.detrend(type='demean')
@@ -223,7 +263,7 @@ if __name__ == "__main__":
         trz.stats.eval_status = evstat # confirmed or rejected whether its used or not in rest,fdtomo
         trz.stats.time_residual = atres # travel time residual
     
-        efil = glob('*{0}.{1}.est'.format(sta,zchan))
+        efil = glob('*.{0}.{1}.est'.format(sta,zchan))
         if (len(efil) < 1):
             est = Stream()
         else:
@@ -233,14 +273,15 @@ if __name__ == "__main__":
             #edat = est.data / np.abs(est.data).max()
             obsall += trz
             estall += ez
+    print('Nobs {0} Nest {1}'.format(len(obsall), len(estall)))
     if len(estall)>0:
         plotwf(obsall, estall, pltname=pltbase, 
-                title='Origin_Info_Here',
-                showfig=showfig)
+                title=origin_string,
+                showfig=showfig, pret=pre, post=post)
     else:
         plotwf(obsall, None, pltname='Event_string', 
                 title='Origin_Info_Here',
-                showfig=showfig)
+                showfig=showfig, pret=pre, post=post)
 
 
 """

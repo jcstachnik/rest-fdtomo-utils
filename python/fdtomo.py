@@ -141,7 +141,7 @@ def read_arrival_line(line, fmt='fixed', dZch='HHZ', dHch='HHN'):
             mn += 1
         yn = line[28:29]
         ph = line[29:30]
-        timeres = float(line[50:56]) # tt residual?
+        timeres = float(line[50:57]) # tt residual?
         tunc = float(line[40:45]) # arr time uncertainty
         astr = '{0}-{1:03d}T{2:02d}:{3:02d}:{4:06.4f}'.format(yr,jd,hr,mn,sec)
         at = UTCDateTime(astr)
@@ -239,9 +239,14 @@ def mkevent(origlist, arrivallist):
     return test_event
 
 
-def fdloc2catalog(fdfile):
+def fdloc2catalog(fdfile, Zch='HHZ', Hch='HHN'):
     """
     Read in fdloc file and convert to Obspy Catalog
+
+    Zch = fdloc file does not have channel name associated
+          with pick.  assign this channel for P
+    Hch = fdloc file does not have channel name associated
+          with pick.  assign this channel for S.
     """
     print('Reading in file: {}'.format(fdfile))
     cat = Catalog()
@@ -274,7 +279,7 @@ def fdloc2catalog(fdfile):
             doarr = 1
             continue
         if (newblock == 1 and doarr == 1):
-            arriv = read_arrival_line(line, fmt='fixed')
+            arriv = read_arrival_line(line, fmt='fixed', dZch=Zch, dHch=Hch)
             arrivals.append(arriv)
             # deal with arids
             # add to arrival, assoc tables
